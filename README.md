@@ -11,22 +11,9 @@ Aplikasi sederhana menggunakan Laravel sebagai backend dan Vue sebagai frontend.
 - PostgresSQL
 - Git
 
-## Instalasi Backend
-```bash
-cd backend
-composer install
-cp .env.example .env
-php artisan key:generate
-php artisan migrate
-php artisan serve
-```
+## Frontend dan Backend
+Frontend dan Backend menjadi sudah menjadi satu bawaan dari Laravel
 
-## Instalasi Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
 
 ## Arsitektur
 Browser -> Vue -> Laravel API -> Database
