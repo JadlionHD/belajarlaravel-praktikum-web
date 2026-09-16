@@ -8,7 +8,7 @@ Aplikasi sederhana menggunakan Laravel sebagai backend dan Vue sebagai frontend.
 - Composer
 - Vue dan Vite
 - Node.js dan NPM
-- MySQL/PostgresSQL
+- PostgresSQL
 - Git
 
 ## Instalasi Backend
