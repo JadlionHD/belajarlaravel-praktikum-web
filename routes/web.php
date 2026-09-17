@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Teams\TeamInvitationController;
+use App\Http\Controllers\TicketController;
 use App\Http\Middleware\EnsureTeamMembership;
 use Illuminate\Support\Facades\Route;
 
@@ -18,7 +19,15 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('invitations/{invitation}', [TeamInvitationController::class, 'decline'])->name('invitations.decline');
 });
 
+Route::get('/tickets', [TicketController::class, 'index'])
+    ->name('tickets.index');
 
+Route::get('/tickets/{ticket}', [TicketController::class, 'show'])
+    ->whereNumber('ticket')
+    ->name('tickets.show');
 
+Route::get('/api/tickets/{ticket}', [TicketController::class, 'showJson'])
+    ->whereNumber('ticket')
+    ->name('tickets.show-json');
 
 require __DIR__.'/settings.php';

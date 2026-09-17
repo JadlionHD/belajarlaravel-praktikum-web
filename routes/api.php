@@ -7,12 +7,11 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
-
 Route::get('/status', function () {
     return response()->json([
         'status' => 'success',
         'message' => 'Laravel API sudah berjalan dengan baik',
         'framework' => 'Laravel',
-        'frontend' => "Vuejs"
+        'frontend' => 'Vuejs',
     ]);
 });
