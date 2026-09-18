@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Ticket;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -20,7 +21,11 @@ class TicketController extends Controller
 
     public function index(): View
     {
-        return view('tickets.index', ['tickets' => $this->tickets()]);
+        $tickets = Ticket::with(['user', 'category'])
+            ->orderByDesc('id')
+            ->paginate(10);
+
+        return view('tickets.index', compact('tickets'));
     }
 
     public function show(int $ticket): View

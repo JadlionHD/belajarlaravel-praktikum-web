@@ -1,15 +1,21 @@
 <?php
 
+use App\Models\Ticket;
 use Illuminate\Support\Facades\Route;
 
 test('tickets index displays list of tickets', function () {
+    $ticket = Ticket::factory()->create([
+        'subject' => 'Tidak dapat login',
+    ]);
+
     $response = $this->get(route('tickets.index'));
 
     $response->assertOk();
     $response->assertViewIs('tickets.index');
     $response->assertSee('Daftar Tiket');
     $response->assertSee('Tidak dapat login');
-    $response->assertSee(route('tickets.show', ['ticket' => 1]));
+    $response->assertSee($ticket->category->name);
+    $response->assertSee($ticket->user->name);
 });
 
 test('tickets show displays ticket details', function () {
