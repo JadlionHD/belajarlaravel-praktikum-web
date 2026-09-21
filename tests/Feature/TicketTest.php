@@ -12,19 +12,23 @@ test('tickets index displays list of tickets', function () {
 
     $response->assertOk();
     $response->assertViewIs('tickets.index');
-    $response->assertSee('Daftar Tiket');
+    $response->assertSee('Daftar tiket');
     $response->assertSee('Tidak dapat login');
     $response->assertSee($ticket->category->name);
     $response->assertSee($ticket->user->name);
 });
 
 test('tickets show displays ticket details', function () {
-    $response = $this->get(route('tickets.show', ['ticket' => 1]));
+    $ticket = Ticket::factory()->create([
+        'subject' => 'Tidak dapat login',
+        'status' => 'open',
+    ]);
+
+    $response = $this->get(route('tickets.show', $ticket));
 
     $response->assertOk();
     $response->assertViewIs('tickets.show');
-    $response->assertSee('Detail Tiket #1');
-    $response->assertSee('Subjek: Tidak dapat login');
+    $response->assertSee('#'.$ticket->id.' — Tidak dapat login');
     $response->assertSee('Status: open');
     $response->assertSee(route('tickets.index'));
 });
@@ -41,33 +45,12 @@ test('tickets show rejects non-numeric parameter', function () {
     $response->assertNotFound();
 });
 
-test('api tickets show returns json with data key', function () {
-    $response = $this->get(route('tickets.show-json', ['ticket' => 1]));
-
-    $response->assertOk();
-    $response->assertJson([
-        'data' => [
-            'id' => 1,
-            'subject' => 'Tidak dapat login',
-            'status' => 'open',
-        ],
-    ]);
-});
-
-test('api tickets show returns 404 for non-existent ticket', function () {
-    $response = $this->get('/api/tickets/999');
-
-    $response->assertNotFound();
-});
-
-test('api tickets show rejects non-numeric parameter', function () {
-    $response = $this->get('/api/tickets/abc');
-
-    $response->assertNotFound();
-});
-
-test('all three ticket routes have valid names', function () {
+test('all seven ticket resource routes have valid names', function () {
     expect(Route::has('tickets.index'))->toBeTrue();
+    expect(Route::has('tickets.create'))->toBeTrue();
+    expect(Route::has('tickets.store'))->toBeTrue();
     expect(Route::has('tickets.show'))->toBeTrue();
-    expect(Route::has('tickets.show-json'))->toBeTrue();
+    expect(Route::has('tickets.edit'))->toBeTrue();
+    expect(Route::has('tickets.update'))->toBeTrue();
+    expect(Route::has('tickets.destroy'))->toBeTrue();
 });

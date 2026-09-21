@@ -1,16 +1,16 @@
 # Sistem Helpdesk Tiket - Praktikum Pemrograman Web
 
-Aplikasi Helpdesk Tiket berbasis **Laravel 13** dan **Vue / Blade**, mendemonstrasikan implementasi relasi Eloquent, Database Seeding deterministik, dan optimasi performa query melalui Eager Loading untuk mencegah problem N+1.
+Aplikasi Helpdesk Tiket berbasis **Laravel 12 / 13** dan **Blade / Vue**, mendemonstrasikan implementasi CRUD terstruktur, Form Request, normalisasi input, Service Layer dengan transaksi multi-tabel atomik, pola Post-Redirect-Get (PRG), dan pengujian otomatis dengan Pest & PHPUnit.
 
 ---
 
 ## 🛠️ Lingkungan & Teknologi
 
-- **PHP**: 8.5.10 (CLI x64)
-- **Framework**: Laravel 13.32.0
+- **PHP**: 8.5+ (CLI x64)
+- **Framework**: Laravel 12.x / 13.x
 - **DBMS**: PostgreSQL (`pgsql`) / SQLite kompatibel
-- **Frontend**: Vue / Vite / Blade
-- **Testing**: Pest 5.2
+- **Frontend**: Blade Plain (Accessible HTML5) / Vue Vite
+- **Testing**: Pest / PHPUnit
 
 ---
 
@@ -54,10 +54,6 @@ DB_PASSWORD=your_password
 ```
 
 ### 6. Menjalankan Migration & Database Seeding
-
-#### ⚠️ PERINGATAN PENTING MENGENAI `migrate:fresh`
-> **Peringatan:** Menjalankan perintah `php artisan migrate:fresh` akan **MENGHAPUS SELURUH TABEL** yang ada di dalam database tanpa konfirmasi tambahan! Gunakan hanya di lingkungan pengembangan (*local/development*) dan jangan pernah dijalankan di lingkungan produksi (*production*).
-
 Jalankan migrasi tabel:
 ```bash
 php artisan migrate
@@ -67,47 +63,103 @@ Jalankan seeder untuk mengisi data awal:
 ```bash
 php artisan db:seed
 ```
-> **Catatan Seeding:** Perintah `php artisan db:seed` dirancang khusus untuk tabel target yang masih **kosong**. Jika ingin mereset dan mengisi ulang seluruh tabel latihan dari nol, gunakan:
-> ```bash
-> php artisan migrate:fresh --seed
-> ```
 Target data yang akan terisi secara otomatis:
 - 10 Data Pengguna (*Users*)
 - 3 Data Kategori (*Categories*: Akun, Jaringan, Aplikasi)
 - 50 Data Tiket (*Tickets*)
 - 100 Data Komentar (*Comments* — tepat 2 komentar per tiket)
 
-### 7. Menjalankan Server Lokal & Frontend
+### 7. Menjalankan Server Lokal
 Jalankan server aplikasi Laravel:
 ```bash
 php artisan serve
 ```
-Dan jalankan Vite dev server di terminal terpisah:
+
+---
+
+## 📖 Modul Pertemuan 4: CRUD, Validasi, dan Lapisan Layanan
+
+### 1. Aturan Bisnis Latihan
+- **Create**:
+  - Status awal selalu ditentukan otomatis oleh server menjadi `'open'`. Field `status` dari pengguna dilarang (`prohibited`).
+  - Satu komentar awal (`note`) wajib tersimpan bersama tiket dalam satu transaksi.
+  - Pada demo lokal, pemilik (`user_id`) dapat dipilih dari dropdown user seed.
+- **Update**:
+  - Pemilik tiket bersifat tetap. Field `user_id` dilarang dikirim (`prohibited`).
+  - Seluruh field editable harus dikirim lengkap (pola PUT/PATCH).
+  - Satu catatan perubahan (`note`) wajib tersimpan sebagai komentar baru bersama pembaruan tiket.
+  - Pilihan status yang sah: `'open'`, `'pending'`, atau `'closed'`.
+- **Delete**:
+  - Tiket berstatus `'closed'` **tidak boleh dihapus** (ditolak oleh Service dengan `ValidationException`).
+  - Tiket berstatus `'open'` atau `'pending'` boleh dihapus beserta seluruh riwayat komentarnya melalui FK `cascadeOnDelete()`.
+
+### 2. Peta Tujuh Aksi Resource Route
+Rute dikonfigurasi dengan pembatas parameter numerik `Route::pattern('ticket', '[0-9]+');` untuk mencegah query database yang salah tipe:
+
+| HTTP Verb | Path / URI | Controller Action | Route Name | Deskripsi |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/tickets` | `TicketController@index` | `tickets.index` | Daftar tiket (paginasi 10 per halaman) |
+| `GET` | `/tickets/create` | `TicketController@create` | `tickets.create` | Form pembuatan tiket baru |
+| `POST` | `/tickets` | `TicketController@store` | `tickets.store` | Simpan tiket baru & komentar awal |
+| `GET` | `/tickets/{ticket}` | `TicketController@show` | `tickets.show` | Detail tiket dan daftar komentar |
+| `GET` | `/tickets/{ticket}/edit` | `TicketController@edit` | `tickets.edit` | Form edit tiket |
+| `PUT/PATCH` | `/tickets/{ticket}` | `TicketController@update` | `tickets.update` | Update tiket & simpan catatan perubahan |
+| `DELETE` | `/tickets/{ticket}` | `TicketController@destroy` | `tickets.destroy` | Hapus tiket (jika bukan closed) |
+
+### 3. Validasi & Normalisasi Field
+Semua validasi dilakukan di lapisan server melalui Form Request (`TicketFormRequest`, `StoreTicketRequest`, `UpdateTicketRequest`):
+- `prepareForValidation()`: Melakukan `trim()` hanya pada nilai string (`subject`, `description`, `note`). Tipe data non-string (seperti array) dibiarkan agar ditangkap oleh rule `string` dan tidak menimbulkan fatal error PHP.
+- `subject`: `required`, `string`, `max:150`.
+- `description`: `required`, `string`, `max:5000`.
+- `category_id`: `required`, `integer`, `exists:categories,id`.
+- `is_urgent`: `required`, `boolean` (checkbox menggunakan pasangan hidden `0` dan input `1`; nilai rusak seperti `'abc'` ditolak).
+- `note`: `required`, `string`, `max:1000`.
+- `user_id`: Wajib dan valid saat create; dilarang (`prohibited`) saat update.
+- `status`: Dilarang (`prohibited`) saat create; wajib dan restricted ke `open,pending,closed` saat update.
+
+### 4. Lapisan Layanan (Service Layer) & Transaksi
+Logika manipulasi data tiket dan komentar dipusatkan di `App\Services\TicketService`:
+- Menggunakan `DB::transaction()` untuk menjamin sifat ACID (atomik). Jika penyimpanan komentar gagal, pembuatan/perubahan tiket otomatis di-*rollback*.
+- Menggunakan `Ticket::query()->lockForUpdate()->findOrFail($id)` pada update dan delete untuk mencegah *race condition*.
+- Exception dibiarkan keluar tanpa blok `catch` yang menelan error, memastikan transaksi ter-rollback sebelum response error diteruskan.
+
+### 5. Batasan Demo Identitas Pengguna
+Pada lingkungan praktikum ini, modul autentikasi dan policy otorisasi belum diintegrasikan:
+- Method `authorize()` pada Form Request mengembalikan `true`.
+- Pemilik tiket dipilih secara manual dari dropdown user seed saat membuat tiket.
+- Penulis komentar disamakan dengan pemilik tiket sebagai bentuk penyederhanaan studi kasus lokal.
+
+---
+
+## 🧪 Pengujian Otomatis (Testing)
+
+### Konfigurasi Database Testing
+Pengujian otomatis menggunakan database testing terisolasi yang dikonfigurasi melalui `phpunit.xml`:
+```xml
+<env name="DB_CONNECTION" value="sqlite"/>
+<env name="DB_DATABASE" value=":memory:"/>
+```
+
+### Menjalankan Test Transaksi Multi-Tabel
+Untuk menjalankan verifikasi transaksi dan rollback atomik:
 ```bash
-npm run dev
+php artisan test --filter=TicketTransactionTest
+```
+
+### Menjalankan Seluruh Kasus Uji CRUD Tiket
+```bash
+php artisan test --filter=TicketCrudTest
+```
+
+### Menjalankan Seluruh Test Suite Proyek
+```bash
+php artisan test --compact
 ```
 
 ---
 
-## 📌 Halaman & Akses Tiket
+## 📑 Matriks 18 Kasus Uji & Dokumentasi
 
-Setelah server berjalan, Anda dapat mengakses:
-- **Daftar Tiket (Paginasi 10 per halaman)**: `http://localhost:8000/tickets`
-- **Halaman 2 Tiket**: `http://localhost:8000/tickets?page=2`
-- **Detail Tiket**: `http://localhost:8000/tickets/1`
-- **API Endpoint JSON**: `http://localhost:8000/api/tickets/1`
-
----
-
-## 📑 Dokumentasi Lengkap & Laporan Pengujian
-
-Seluruh dokumentasi teknis, diagram, dan bukti pengujian lengkap tersimpan di folder [`docs/`](docs/):
-- **[Laporan Pengujian & Analisis Lengkap](docs/laporan.md)**:
-  1. Lingkungan & DBMS
-  2. ERD & Kamus Data detail
-  3. Bukti pengujian Migrate - Rollback - Migrate
-  4. Hasil validasi jumlah data seed (10/3/50/100) pada rekonstruksi ke-1 dan ke-2
-  5. Bukti pengujian relasi dua arah antar model
-  6. Dokumentasi halaman pertama dan kedua
-  7. Tabel komparasi query Lazy vs Eager Loading ($N=10$ dan $N=20$)
-  8. Analisis kendala dan solusinya
+Dokumentasi detail pengujian 18 skenario pengujian sukses, gagal, batas karakter, manipulasi data, dan keamanan output tersedia pada:
+- **[Matriks 18 Kasus Uji CRUD](docs/kasus-uji-crud.md)**
+- **[Laporan Pertemuan 3 & Analisis Query](docs/laporan.md)**
