@@ -1,0 +1,15 @@
+services:
+    db:
+        image: docker.io/library/postgres:17
+        restart: unless-stopped
+        ports:
+            - 0.0.0.0:5432:5432
+        environment:
+            POSTGRES_USER: belajarlaravel # The PostgreSQL user (useful to connect to the database)
+            POSTGRES_PASSWORD: admin123 # The PostgreSQL password (useful to connect to the database)
+            POSTGRES_DB: belajarlaravel # The PostgreSQL default database (automatically created at first launch)
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+
+volumes:
+    postgres_data:
