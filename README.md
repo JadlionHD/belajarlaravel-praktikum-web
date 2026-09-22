@@ -158,8 +158,228 @@ php artisan test --compact
 
 ---
 
-## 📑 Matriks 18 Kasus Uji & Dokumentasi
+## 🔐 Modul Pertemuan 5: REST API, Autentikasi, dan Otorisasi
 
-Dokumentasi detail pengujian 18 skenario pengujian sukses, gagal, batas karakter, manipulasi data, dan keamanan output tersedia pada:
+### 1. Spesifikasi Aktual Lingkungan & Paket
+- **PHP**: 8.5+
+- **Laravel Framework**: 12.x
+- **Laravel Sanctum**: v4.3.3 (Personal Access Token)
+- **DBMS**: PostgreSQL (`pgsql`) / SQLite `:memory:` untuk pengujian
+- **Format Header**: `Accept: application/json`, `Content-Type: application/json`
+
+### 2. Mode Autentikasi Token (Stateless)
+- **Token Mode**: Personal Access Token (PAT) Sanctum melalui header `Authorization: Bearer <token>` tanpa session cookie.
+- **Masa Berlaku**: Token berlaku selama 2 jam sejak diterbitkan.
+- **Keamanan Respons**: Login menyertakan header `Cache-Control: no-store, private` agar token tidak tersimpan di cache perantara/browser.
+- **Pencabutan Token (Logout)**: `POST /api/v1/auth/logout` mencabut token aktif saat ini (`currentAccessToken()->delete()`) dan menghasilkan `204 No Content`. Token lain milik pengguna yang sama tetap sah.
+
+### 3. Penutupan Rute Publik Lama
+Seluruh endpoint tiket lama (`/tickets`) di `routes/web.php` yang tidak memiliki autentikasi atau policy telah dinonaktifkan secara total. Tidak ada lagi jalur publik yang dapat membaca atau memanipulasi data tiket.
+
+### 4. Peta Kontrak REST API v1 (`/api/v1`)
+
+| Method | Endpoint | Middleware / Auth | Status | Deskripsi |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/api/v1/auth/login` | `throttle:api-login` | `200` / `401` / `422` | Autentikasi pengguna, menghasilkan Bearer token |
+| `POST` | `/api/v1/auth/logout` | `auth:sanctum`, `throttle:api-v1` | `204` | Mencabut access token yang sedang digunakan |
+| `GET` | `/api/v1/me` | `auth:sanctum`, `throttle:api-v1` | `200` | Mendapatkan identitas ringkas pengguna (`id`, `name`) |
+| `GET` | `/api/v1/categories` | `auth:sanctum`, `throttle:api-v1` | `200` | Daftar kategori tiket terurut nama (`id`, `name`) |
+| `GET` | `/api/v1/tickets` | `auth:sanctum`, `throttle:api-v1` | `200` / `422` | Daftar tiket milik sendiri dengan paginasi (`per_page` 1–50) |
+| `POST` | `/api/v1/tickets` | `auth:sanctum`, `throttle:api-v1` | `201` / `422` | Buat tiket baru + catatan awal, mengembalikan header `Location` |
+| `GET` | `/api/v1/tickets/{ticket}` | `auth:sanctum`, `throttle:api-v1` | `200` / `403` / `404` | Detail tiket milik sendiri |
+| `PUT/PATCH` | `/api/v1/tickets/{ticket}` | `auth:sanctum`, `throttle:api-v1` | `200` / `403` / `404` / `422` | Update tiket sendiri (wajib payload lengkap) + catatan baru |
+| `DELETE` | `/api/v1/tickets/{ticket}` | `auth:sanctum`, `throttle:api-v1` | `204` / `403` / `404` / `422` | Hapus tiket (gagal 422 jika status `closed`) |
+| `GET` | `/api/v1/reports/summary` | `auth:sanctum`, `throttle:api-v1` | `200` / `403` | Laporan agregat jumlah tiket (khusus Admin via Gate) |
+
+> **Catatan Pola PATCH**: Pada latihan ini, endpoint `PATCH` mewajibkan payload lengkap yang sama dengan `PUT`.
+
+### 5. Otorisasi Berlapis (Policy & Gate)
+- **`TicketPolicy` (Kepemilikan)**:
+  - `viewAny`, `create`: Diizinkan untuk pengguna terautentikasi.
+  - `view`, `update`, `delete`: Menegakkan aturan kepemilikan ketat `(int) $user->id === (int) $ticket->user_id`. Pengguna lain (misal: Budi mengakses tiket Ani) ditolak dengan **`403 Forbidden`**.
+- **Gate `view-ticket-summary` (Peran Admin)**:
+  - Hanya pengguna dengan flag `is_admin = true` yang dapat mengakses `/api/v1/reports/summary`. Pengguna reguler ditolak dengan `403 Forbidden`.
+  - Admin **tidak** memiliki izin otomatis untuk mengubah atau menghapus tiket milik pengguna lain.
+
+### 6. Integritas Transaksional (`ApiTicketService`)
+- Operasi manipulasi tiket dibungkus dalam `DB::transaction()` dengan `lockForUpdate()`.
+- Pemilik tiket (`user_id`) mutlak diambil dari objek `$actor` (model `User` terautentikasi), **bukan** dari request body.
+- Payload request dilarang memuat `user_id` atau `is_admin` (`prohibited`).
+- Tiket berstatus `closed` tidak boleh dihapus (`422 Unprocessable Content`).
+- Penghapusan tiket terbuka (`open`/`pending`) otomatis menghapus riwayat komentar melalui database cascade.
+
+### 7. Transformasi Data & Kerahasiaan (`TicketResource`)
+- Menggunakan API Resource dengan allowlist atribut: `id`, `subject`, `description`, `status`, `is_urgent`, `created_at`, `updated_at`, serta `owner` dan `category` (jika ter-load).
+- Atribut sensitif seperti `password`, `remember_token`, `email`, `is_admin`, dan `access_token` **tidak pernah** diekspos ke klien.
+
+### 8. Pembatasan Request (Rate Limiter)
+- **`api-login`**: Maksimal 5 permintaan per menit per IP address. Permintaan ke-6 menghasilkan **`429 Too Many Requests`** dengan header `Retry-After`.
+- **`api-v1`**: Maksimal 60 permintaan per menit per pengguna terautentikasi.
+
+### 9. Konfigurasi CORS (`config/cors.php`)
+- `allowed_origins`: `['http://localhost:5173']`
+- `allowed_headers`: `['Accept', 'Authorization', 'Content-Type']`
+- `exposed_headers`: `['Location', 'Retry-After']`
+- `supports_credentials`: `false`
+
+### 10. Data Uji Demo (`ApiDemoSeeder`)
+Jalankan seeder untuk mengisi akun pengujian:
+```bash
+php artisan db:seed --class=ApiDemoSeeder
+```
+- **Ani (Pemilik Tiket 1)**: `ani@example.test` | Password: `LatihanWeb2!2026` | `is_admin: false`
+- **Budi (Pemilik Tiket 2)**: `budi@example.test` | Password: `LatihanWeb2!2026` | `is_admin: false`
+- **Admin**: `admin@example.test` | Password: `LatihanWeb2!2026` | `is_admin: true`
+- **Kategori**: `Jaringan`
+
+### 11. Pengujian dengan Koleksi Postman
+1. File koleksi telah disediakan di: [docs/helpdesk-v1.postman_collection.json](docs/helpdesk-v1.postman_collection.json).
+2. Impor file tersebut ke Postman Desktop (**Import** ➜ pilih file JSON).
+3. **Pengaturan Variabel Demo (Sangat Penting)**:
+   - Koleksi sengaja mengosongkan variabel `password_demo` agar aman dari commit Git.
+   - Buka koleksi **`Helpdesk API v1 - Pertemuan 5`** ➜ tab **Variables**.
+   - Pada baris **`password_demo`**, isi kolom **Initial Value** dan **Current Value** dengan:
+     ```text
+     LatihanWeb2!2026
+     ```
+   - Tekan **Save** (`Ctrl + S`).
+   - *(Catatan: Jika `password_demo` dibiarkan kosong, request login akan ditolak dengan `422 Unprocessable Content` sehingga token tidak tersimpan dan menyebabkan seluruh request berikutnya gagal).*
+4. **Menjalankan Runner**:
+   - Klik kanan koleksi ➜ **Run collection**.
+   - Jalankan secara berurutan. Seluruh 31 assertions pengujian akan otomatis berstatus **PASS 100%**.
+   - Jika mendapati status `429 Too Many Requests` akibat pengujian cepat berulang, jalankan `php artisan cache:clear` di terminal lalu ulangi.
+5. **Ekspor Bersih**:
+   - Kosongkan kembali `password_demo` dan token pada koleksi sebelum mengekspor ulang atau melakukan commit ke Git.
+
+### 12. Contoh Kontrak Request & Response Bersih
+
+#### A. Login Sukses (`POST /api/v1/auth/login`)
+**Request Body**:
+```json
+{
+  "email": "ani@example.test",
+  "password": "LatihanWeb2!2026",
+  "device_name": "postman-worksheet"
+}
+```
+**Response (`200 OK`, `Cache-Control: no-store, private`)**:
+```json
+{
+  "token_type": "Bearer",
+  "access_token": "1|uT3L9...",
+  "expires_at": "2026-09-22T08:00:00+00:00",
+  "user": {
+    "id": 1,
+    "name": "Ani"
+  }
+}
+```
+
+#### B. Pembuatan Tiket (`POST /api/v1/tickets`)
+**Headers**: `Authorization: Bearer <token_ani>`  
+**Request Body**:
+```json
+{
+  "subject": "Wi-Fi ruang kuliah putus",
+  "description": "Koneksi putus sejak pagi.",
+  "category_id": 1,
+  "is_urgent": false,
+  "note": "Laporan awal."
+}
+```
+**Response (`201 Created`, Header `Location: http://127.0.0.1:8000/api/v1/tickets/1`)**:
+```json
+{
+  "data": {
+    "id": 1,
+    "subject": "Wi-Fi ruang kuliah putus",
+    "description": "Koneksi putus sejak pagi.",
+    "status": "open",
+    "is_urgent": false,
+    "owner": {
+      "id": 1,
+      "name": "Ani"
+    },
+    "category": {
+      "id": 1,
+      "name": "Jaringan"
+    },
+    "created_at": "2026-09-22T06:00:00+00:00",
+    "updated_at": "2026-09-22T06:00:00+00:00"
+  }
+}
+```
+*(Perhatikan: Field sensitif seperti `email`, `password`, `is_admin`, dan `access_token` disaring dan tidak bocor ke output).*
+
+#### C. Pembaruan Tiket Lengkap (`PUT /api/v1/tickets/{id}`)
+**Headers**: `Authorization: Bearer <token_ani>`  
+**Request Body**:
+```json
+{
+  "subject": "Wi-Fi sedang diperiksa",
+  "description": "Petugas memeriksa koneksi.",
+  "category_id": 1,
+  "is_urgent": false,
+  "status": "pending",
+  "note": "Perubahan status oleh pemilik."
+}
+```
+**Response (`200 OK`)**: Mengembalikan objek `TicketResource` terbaru dan otomatis menambah 1 komentar riwayat pada database.
+
+#### D. Penghapusan Tiket (`DELETE /api/v1/tickets/{id}`)
+**Headers**: `Authorization: Bearer <token_ani>`  
+- **Tiket Open / Pending**: Menghasilkan **`204 No Content`** dengan response body kosong, menghapus record tiket dan seluruh komentarnya secara berantai (*cascade*).
+- **Tiket Closed**: Ditolak dengan **`422 Unprocessable Content`** (`"Tiket closed tidak boleh dihapus."`).
+
+#### E. Laporan Ringkasan Admin (`GET /api/v1/reports/summary`)
+**Headers**: `Authorization: Bearer <token_admin>`  
+**Response (`200 OK`)**:
+```json
+{
+  "data": {
+    "ticket_count": 2
+  }
+}
+```
+*(Pengguna non-admin yang memanggil endpoint ini akan ditolak dengan `403 Forbidden`).*
+
+### 13. Strategi Versioning API (`v1` ke `v2`)
+- Prefix `/api/v1` dan namespace `App\Http\Controllers\Api\V1` menegakkan kontrak API yang stabil.
+- Perubahan kompatibilitas mundur (*breaking changes*) seperti perubahan struktur respons, perubahan tipe data, atau penambahan field wajib baru harus dirilis di bawah versi baru (misalnya `/api/v2`).
+- Klien eksisting dapat terus menggunakan `/api/v1` tanpa risiko kegagalan integrasi selama masa transisi.
+
+### 14. Menjalankan Automated Feature Test (18 Test Cases)
+Untuk menjalankan pengujian otomatis seluruh 18 Test Case (TC-01 s/d TC-18) Pertemuan 5:
+```bash
+vendor/bin/pest tests/Feature/ApiV1TicketTest.php
+```
+Seluruh 18 pengujian mencakup:
+- **TC-01**: Login (200, 401 pesan identik, 422)
+- **TC-02**: Penolakan tanpa autentikasi (401)
+- **TC-03**: Server identity & penolakan manipulasi body (201 & 422)
+- **TC-04**: Paginasi privat per pengguna
+- **TC-05**: IDOR detail (403 tanpa data bocor)
+- **TC-06**: IDOR update/delete (403 dan DB tidak berubah)
+- **TC-07**: Update pemilik & penambahan komentar
+- **TC-08**: Validasi field & batasan karakter (422)
+- **TC-09**: ID tidak ditemukan atau non-numerik (404)
+- **TC-10**: Aturan tiket closed & cascade delete (422, 204, 404)
+- **TC-11**: Hak akses Gate Admin & proteksi tiket user (403 & 200)
+- **TC-12**: Pencegahan kebocoran data sensitif (allowlist data)
+- **TC-13**: Logout token aktif (204) dan validitas token sekunder
+- **TC-14**: Penolakan token kadaluwarsa (401)
+- **TC-15**: Penegakan Rate Limiter (429 & Retry-After)
+- **TC-16**: Penegakan kebijakan CORS Origin
+- **TC-17**: Rollback transaksi saat kegagalan komentar
+- **TC-18**: Verifikasi penutupan seluruh rute tiket lama (404)
+
+---
+
+## 📑 Matriks Kasus Uji & Dokumentasi
+
+Dokumentasi detail pengujian dan laporan tersedia pada:
+- **[Koleksi Postman v2.1](docs/helpdesk-v1.postman_collection.json)**
+- **[Test Suite API v1 (Pest)](tests/Feature/ApiV1TicketTest.php)**
 - **[Matriks 18 Kasus Uji CRUD](docs/kasus-uji-crud.md)**
-- **[Laporan Pertemuan 3 & Analisis Query](docs/laporan.md)**
+- **[Laporan Praktikum & Analisis Query](docs/laporan.md)**
+
