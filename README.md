@@ -375,11 +375,83 @@ Seluruh 18 pengujian mencakup:
 
 ---
 
-## 📑 Matriks Kasus Uji & Dokumentasi
+## 🎨 Modul Pertemuan 6: Dasar Vue dan Desain Komponen
 
-Dokumentasi detail pengujian dan laporan tersedia pada:
-- **[Koleksi Postman v2.1](docs/helpdesk-v1.postman_collection.json)**
-- **[Test Suite API v1 (Pest)](tests/Feature/ApiV1TicketTest.php)**
-- **[Matriks 18 Kasus Uji CRUD](docs/kasus-uji-crud.md)**
-- **[Laporan Praktikum & Analisis Query](docs/laporan.md)**
+### 1. Spesifikasi Aktual Lingkungan & Paket Frontend
+- **Node.js**: `v24.21.0`
+- **NPM**: `11.19.0`
+- **Vue**: `3.5.42` (SFC Composition API dengan `<script setup>`)
+- **Vite Bundler**: `8.3.0` (`vite-plus` v0.3.0)
+- **Plugin Vue**: `@vitejs/plugin-vue` v6.0.9
+- **Inertia.js Integration**: `@inertiajs/vue3` v3.7.1
+- **Akses Halaman Demo**: `http://localhost:8000/pertemuan6` atau `http://localhost:5173/pertemuan6`
+
+### 2. Menjalankan Frontend
+```bash
+# Instalasi dependensi
+npm install
+
+# Menjalankan server development (HMR)
+npm run dev
+
+# Kompilasi build produksi
+npm run build
+```
+
+### 3. Struktur & Batas Tanggung Jawab Komponen
+Studi kasus membagi UI helpdesk lokal menjadi 7 jenis komponen yang bersih dan terisolasi:
+
+```text
+App (Single Source of Truth: tickets, selectedStatus, showForm, formVersion)
+├── BasePanel (Title: "Daftar tiket", Slot Default & Footer)
+│   ├── TicketFilter (Props: modelValue ◄──► Emits: update:modelValue)
+│   └── TicketList (Props: tickets, categories ◄── Emits: advance)
+│       └── TicketCard (Props: ticket, categoryName ◄── Emits: advance)
+│           └── TicketStatus (Props: status [computed label])
+└── BasePanel (Title: "Tiket baru", Slot Default & Footer)
+    └── TicketForm (Props: categories ◄── Emits: submit) [Draft Lokal: form]
+```
+
+### 4. Tabel Kontrak Komunikasi (Props, Emits, dan Slots)
+
+| Komponen | Path File | Props Diterima | Emits Dikirim | Slot | Tanggung Jawab Utama |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`App`** | `src/App.vue` | - | - | - | Pemilik state `tickets`, filter `selectedStatus`, title watcher, eksekusi penambahan & transisi tiket. |
+| **`BasePanel`** | `src/components/BasePanel.vue` | `title` (String, req) | - | `<slot />`, `<slot name="footer" />` | Kerangka panel reusable dengan header judul, body dinamis, dan footer opsional. |
+| **`TicketStatus`** | `src/components/TicketStatus.vue` | `status` (String, req) | - | - | Badge visual dan label teks dari `computed` (`open`, `pending`, `closed`). |
+| **`TicketCard`** | `src/components/TicketCard.vue` | `ticket` (Object, req), `categoryName` (String) | `advance(id)` | - | Tampilan detail kartu tiket, indikator mendesak, dan tombol "Lanjutkan status" (disabled jika closed). |
+| **`TicketList`** | `src/components/TicketList.vue` | `tickets` (Array, req), `categories` (Array, req) | `advance(id)` | - | Conditional rendering empty state (`tickets.length === 0`), perulangan kartu `:key="ticket.id"`, dan relay event `advance`. |
+| **`TicketFilter`** | `src/components/TicketFilter.vue` | `modelValue` (String, req) | `update:modelValue` | - | Kontrol dropdown filter status dengan pola 2-way binding manual tanpa mutasi prop. |
+| **`TicketForm`** | `src/components/TicketForm.vue` | `categories` (Array, req) | `submit(payload)` | - | Draft form `reactive` lokal, autofocus via `onMounted`, validasi client, dan pembuatan payload objek baru. |
+
+### 5. Kepemilikan State (*State Ownership*) & Alur Komunikasi
+- **Props Mengalir Turun (*Top-Down*)**: Data tiket (`tickets`) dan kategori (`categories`) hanya dimiliki oleh `App.vue`. Komponen anak hanya menerima data melalui props dalam mode baca (*read-only*).
+- **Event Mengalir Naik (*Bottom-Up*)**: Komponen anak dilarang keras mengubah props secara langsung (`props.ticket.status = '...'` dilarang). Untuk meminta perubahan status, `TicketCard` mengirim `emit('advance', id)` -> di-*relay* oleh `TicketList` -> ditangkap oleh `App.vue` yang secara resmi memutasi `tickets.value`.
+- **Draft Lokal Form**: `TicketForm` memiliki state draft sendiri menggunakan `reactive()`. Saat submit, objek salinan datar dibuat (*flat payload*) agar referensi draft form terputus dari state parent.
+- **Siklus Hidup & Reset**: Reset form dikendalikan oleh parent dengan menaikkan `formVersion++` yang mengubah `:key` pada `<TicketForm>`, sehingga Vue membuang instance lama dan membuat instance baru dengan input judul terfokus kembali (`onMounted`).
+
+### 6. Matriks Hasil 16 Kasus Uji (TC-01 s/d TC-16)
+
+| Kode | Kasus Uji | Kondisi Awal & Langkah | Hasil yang Diharapkan | Hasil Aktual | Status |
+| :--- | :--- | :--- | :--- | :--- | :---: |
+| **TC-01** | Data Awal | Muat ulang halaman (`refresh`) | Total 3 tiket, open=1, pending=1, closed=1, kategori benar. | Total 3 tiket, open/pending/closed masing-masing 1, kategori "Jaringan" & "Perangkat". | **PASS** |
+| **TC-02** | Filter Status | Pilih all, open, pending, closed | Menampilkan berturut-turut 3, 1, 1, 1 kartu. `tickets.length` tetap 3. | Filter menyaring tampilan dengan tepat tanpa mengubah array data sumber. | **PASS** |
+| **TC-03** | Perubahan Status | Filter open, klik "Lanjutkan status" pada #1 | Tiket #1 berubah pending, hilang dari filter open, total sumber tetap 3. | Tiket berpindah status, re-render reaktif instan, total tiket tetap 3. | **PASS** |
+| **TC-04** | Status Closed | Periksa tombol pada tiket #3 (closed) | Tombol disabled, parent tidak memproses jika menerima ID closed. | Tombol berstatus disabled dan transisi ditolak oleh handler parent. | **PASS** |
+| **TC-05** | Empty State | Tiket open dipindahkan ke pending, pilih filter open | Muncul teks *"Tidak ada tiket sesuai filter."* dengan role `status`. | Empty state tampil bersih menggantikan elemen daftar. | **PASS** |
+| **TC-06** | Draft Terpisah | Ketik judul/uraian form tanpa submit | State `tickets` dan daftar kartu tidak berubah sama sekali. | Form draft sepenuhnya terisolasi dalam state `reactive` lokal child. | **PASS** |
+| **TC-07** | Submit Sah | Isi form lengkap & submit | Menambah tepat 1 tiket (ID 4), status open, filter kembali all, form kosong. | Tiket bertambah dengan ID unik, filter reset ke all, form bersih terfokus. | **PASS** |
+| **TC-08** | Payload Terpisah | Ketik form baru setelah submit berhasil | Data tiket yang baru ditambahkan dan `lastSubmission` tidak terpengaruh. | Parent memegang salinan payload baru, bebas efek samping ketikan form. | **PASS** |
+| **TC-09** | Validasi Kosong/Spasi | Isi field dengan spasi atau kosongkan lalu submit | Pesan peringatan muncul, tiket tidak bertambah, form tidak direset. | Validasi mendeteksi input kosong/whitespace, form mempertahankan draft. | **PASS** |
+| **TC-10** | Batas Karakter | Cek batas panjang string (subject 150/151, note 1000/1001) | Tepat batas diizinkan, melebihi batas ditolak dengan pesan error. | Validasi panjang string JavaScript UTF-16 ditegakkan secara akurat. | **PASS** |
+| **TC-11** | Kategori & Checkbox | Submit tanpa pilih kategori; toggle checkbox | Tanpa kategori ditolak; checkbox menghasilkan boolean `true`/`false`. | Validasi kategori berhasil, nilai urgensi tersimpan sebagai boolean murni. | **PASS** |
+| **TC-12** | Lifecycle Form | Tutup form lalu buka; submit sah | Tutup membuang draft, buka memicu autofocus; submit menaikkan `formVersion`. | `v-if` menghancurkan/membuat ulang instance, `onMounted` memfokuskan judul. | **PASS** |
+| **TC-13** | Slot & Reuse | Amati kedua BasePanel & badge status | BasePanel menampilkan header/footer berbeda via slot; TicketStatus reusable. | Slot default dan footer terpasang sempurna tanpa duplikasi layout. | **PASS** |
+| **TC-14** | Watcher & Title | Perhatikan judul tab browser; refresh halaman | Judul tab berubah: `Helpdesk latihan (3)` -> `(4)`. Refresh kembali ke (3). | Watcher sinkron dengan `tickets.length`, refresh mengembalikan in-memory state. | **PASS** |
+| **TC-15** | Audit Mutasi Props | Analisis kode komponen anak | Tidak ada operator mutasi/assignment langsung pada properti objek props. | Mutasi dilarang total; semua pembaruan melalui event emit ke parent. | **PASS** |
+| **TC-16** | Build & Escape | Jalankan `npm run build` dan input teks `<b>tag</b>` | Build sukses 0 error; input HTML ditampilkan secara literal (aman dari XSS). | Vite build lulus sempurna; interpolasi teks Vue aman secara default. | **PASS** |
+
+### 7. Batas Validasi Frontend & Catatan Desain
+- **Penyimpanan di Memori**: Seluruh state tiket berada di memori browser pengguna (*RAM*). Refresh browser akan mengembalikan data ke `initialTickets` (3 tiket). Tidak ada `fetch`, `axios`, atau API endpoint Laravel yang dipanggil pada modul ini.
+- **Validasi Frontend vs Backend**: Pengecekan panjang karakter (150, 5000, 1000) dan kelengkapan field di frontend bertujuan memberikan umpan balik langsung kepada pengguna (*UX*), bukan pengganti Form Request dan otorisasi Sanctum backend pada Pertemuan 5.
 
