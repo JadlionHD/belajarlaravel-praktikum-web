@@ -455,3 +455,120 @@ App (Single Source of Truth: tickets, selectedStatus, showForm, formVersion)
 - **Penyimpanan di Memori**: Seluruh state tiket berada di memori browser pengguna (*RAM*). Refresh browser akan mengembalikan data ke `initialTickets` (3 tiket). Tidak ada `fetch`, `axios`, atau API endpoint Laravel yang dipanggil pada modul ini.
 - **Validasi Frontend vs Backend**: Pengecekan panjang karakter (150, 5000, 1000) dan kelengkapan field di frontend bertujuan memberikan umpan balik langsung kepada pengguna (*UX*), bukan pengganti Form Request dan otorisasi Sanctum backend pada Pertemuan 5.
 
+---
+
+## 🌐 Modul Pertemuan 7: SPA, Vue Router, Pinia, dan Konsumsi API
+
+### 1. Spesifikasi Aktual Lingkungan & Paket
+- **Node.js**: `v24.21.0`
+- **NPM**: `11.19.0`
+- **PHP**: `8.5.10`
+- **Laravel Framework**: `12.x`
+- **Vue**: `3.5.42`
+- **Vue Router**: `4.6.4` (HTML5 History Mode `createWebHistory`)
+- **Pinia**: `3.0.4` (State Management Minimalis)
+- **Axios**: `1.20.0` (`withCredentials: true`, `withXSRFToken: true`)
+- **Vite Bundler**: `8.3.0`
+- **Testing**: Pest PHP (`tests/Feature/SessionAuthTest.php`, `tests/Feature/ApiV1TicketTest.php`)
+
+### 2. Cara Menjalankan Aplikasi
+Jalankan server backend Laravel dan server frontend Vite di terminal terpisah:
+
+```bash
+# Terminal 1: Menjalankan Backend Laravel (Port 8000)
+php artisan serve --host=localhost --port=8000
+
+# Terminal 2: Menjalankan Frontend SPA Vite (Port 5173)
+npm run dev
+```
+
+Akses SPA melalui browser: `http://localhost:5173/tickets`
+
+### 3. Arsitektur & Peta Rute
+
+#### A. Alur Sesi Sanctum SPA & Transport Lintas Origin
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Browser as Browser Client (:5173)
+    participant Router as Vue Router Guard
+    participant Pinia as Auth Store (Pinia)
+    participant Axios as Axios Client
+    participant Laravel as Laravel Backend (:8000)
+
+    Browser->>Router: Buka /tickets
+    Router->>Pinia: auth.restore()
+    Pinia->>Axios: GET /api/v1/me
+    alt Sesi Belum Ada (401)
+        Axios-->>Pinia: 401 Unauthorized
+        Pinia-->>Router: Guest (authenticated = false)
+        Router-->>Browser: Redirect ke /login?redirect=/tickets
+        Browser->>Axios: GET /sanctum/csrf-cookie
+        Axios-->>Browser: Set-Cookie: XSRF-TOKEN
+        Browser->>Axios: POST /login (email, password)
+        Axios->>Laravel: POST /login + X-XSRF-TOKEN
+        Laravel-->>Browser: 200 OK {data: {id, name}} + Cookie: laravel_session
+        Browser->>Router: Redirect ke /tickets
+    else Sesi Sah (200)
+        Axios-->>Pinia: 200 OK {data: {id, name}}
+        Pinia-->>Router: Authenticated (user diisi)
+        Router-->>Browser: Render HelpdeskLayout + ListView
+    end
+```
+
+#### B. Peta Rute Frontend vs Backend
+
+| Frontend Route (`Vue Router`) | Layout / Komponen | Protected? | Endpoint API Terkait | Keterangan |
+| :--- | :--- | :---: | :--- | :--- |
+| `/login` | `LoginView` | Publik | `GET /sanctum/csrf-cookie`, `POST /login` | Autentikasi sesi SPA |
+| `/session-error` | `SessionErrorView` | Publik | - | Penanganan server/jaringan mati saat cek sesi |
+| `/tickets` | `HelpdeskLayout` ➜ `ListView` | Ya | `GET /api/v1/tickets?page=n&per_page=5` | Daftar tiket milik sendiri dengan pagination |
+| `/tickets/new` | `HelpdeskLayout` ➜ `CreateView` | Ya | `GET /api/v1/categories`, `POST /api/v1/tickets` | Form tiket baru + catatan awal |
+| `/tickets/:id(\\d+)` | `HelpdeskLayout` ➜ `DetailView` | Ya | `GET /api/v1/tickets/{id}` | Detail tiket pemilik (403 jika IDOR, 404 jika nihil) |
+| `/:pathMatch(.*)*` | `NotFoundView` | Publik | - | Catch-all SPA route |
+
+### 4. Kepemilikan State (*State Ownership*)
+- **Auth Store (Pinia)**: Hanya menyimpan `user` (`{id, name}`) dan flag boolean `ready`.
+- **Query URL (`route.query.page`)**: Memegang nomor halaman pagination aktif, memungkinkan navigasi Back/Forward dan refresh tanpa kehilangan posisi data.
+- **Lokal Komponen (`useRead`)**: Menyimpan array `data`, pesan `message`, dan `state` UI (`idle`, `loading`, `empty`, `success`, `error`).
+- **Form Draft (`CreateView`)**: Draft input `form` terisolasi di komponen pembuatan tiket dan tidak bocor ke store global.
+
+### 5. Pembatalan Request & Urutan Respons (*Sequence Counter*)
+Composable `useRead` mengimplementasikan pola pembatalan otomatis untuk mencegah respons basi (*stale responses*) menimpa data terbaru:
+```javascript
+const own = ++sequence
+controller?.abort()
+controller = new AbortController()
+const result = await loader(...args, controller.signal)
+if (own !== sequence) return // Hanya hasil terbaru yang diizinkan memutasi state UI
+```
+
+### 6. Matriks Hasil 22 Kasus Uji (TC-01 s/d TC-22)
+Dokumen pengujian lengkap tersedia di [docs/laporan-22-kasus-uji-spa.md](docs/laporan-22-kasus-uji-spa.md).
+
+| Kode | Kasus Uji | Skenario | Expected Result | Actual Result | Status |
+| :--- | :--- | :--- | :--- | :--- | :---: |
+| **TC-01** | Guest & Guard | Akses `/tickets/new` tanpa sesi | Redirect `/login`; login sukses kembali ke form | Berhasil redirect bolak-balik | **PASS** |
+| **TC-02** | Login Salah | Password salah pada `/login` | Status 401; pesan kesalahan lokal; tanpa loop | Error muncul lokal, password direset | **PASS** |
+| **TC-03** | Refresh Session | Tekan F5 pada `/tickets/1` | `/me` pulihkan sesi; nama user & tiket tampil | Sesi pulih instan tanpa kedip login | **PASS** |
+| **TC-04** | Restore Gagal | Refresh saat backend mati | Ke `/session-error`; retry pulih saat backend aktif | Redirect session-error & retry bekerja | **PASS** |
+| **TC-05** | Nested Route | Navigasi List ➜ Detail ➜ Create | Layout tetap; child berganti; back/forward tepat | HelpdeskLayout konsisten | **PASS** |
+| **TC-06** | SPA 404 & Regex | Akses `/ngawur` dan `/tickets/abc` | Ditangkap NotFoundView; nol request API bocor | Regex `:id(\\d+)` menolak non-angka | **PASS** |
+| **TC-07** | Loading State | Throttling Slow 3G di detail | Teks "Memuat data..."; data lama dibersihkan | ReadState loading & clean data lama | **PASS** |
+| **TC-08** | Empty State | Akun baru tanpa tiket | Status 200 `data: []`; tampil empty state + link | Tampil "Belum ada data..." | **PASS** |
+| **TC-09** | Pagination | Navigasi page 1 ke 2 | Query `?page=2` di URL; data sesuai server | Sinkronisasi dua arah URL & meta | **PASS** |
+| **TC-10** | Race Condition | Klik cepat tiket A lalu tiket B | Request A canceled; hanya data B yang tampil | Request A abort; hanya B dirender | **PASS** |
+| **TC-11** | Scope Unmount | Pindah rute saat list loading | Request dibatalkan tanpa pesan error di halaman baru | onScopeDispose memicu abort bersih | **PASS** |
+| **TC-12** | Otorisasi 403 | Ani membuka tiket milik Budi | Status 403; pesan tidak berhak; sesi tetap aktif | Tiket terlindungi; sesi tidak logout | **PASS** |
+| **TC-13** | Resource 404 | Buka detail tiket ID 99999 | Status 404; pesan "Data tidak ditemukan." | ReadState error 404 tampil tepat | **PASS** |
+| **TC-14** | Validasi 422 | Submit form tiket kosong | Status 422; daftar error per field; draft utuh | Pesan validasi tampil; input tersimpan | **PASS** |
+| **TC-15** | Klik Ganda & 201 | Klik simpan cepat 2 kali | 1 request POST; respons 201 pindah ke ID server | Fieldset disabled; navigasi ke detail baru | **PASS** |
+| **TC-16** | 401 Protected | Hapus cookie sesi saat di detail | Interceptor 401; auth dibersihkan; ke login | Redirect otomatis ke login tanpa loop | **PASS** |
+| **TC-17** | CSRF 419 | Hapus cookie XSRF sebelum POST | Status 419; pesan pemulihan CSRF muncul | Peringatan muat ulang tampil | **PASS** |
+| **TC-18** | Rate Limiter 429 | Login salah >5 kali dalam 1 menit | Status 429; pesan batas request & Retry-After | Rate limiter `api-login` aktif | **PASS** |
+| **TC-19** | Offline & Retry | Matikan backend lalu coba lagi | Pesan jaringan; nyalakan backend & retry sukses | Tombol "Coba lagi" memuat ulang GET | **PASS** |
+| **TC-20** | POST Tak Pasti | Disconnect saat POST dikirim | Pesan jujur: "Hasil simpan belum pasti..." | Peringatan kejujuran jaringan tampil | **PASS** |
+| **TC-21** | Logout Sesi | Klik tombol Logout di navbar | Request 204; sesi server dihapus; ke `/login` | Sesi bersih; akses protected ditolak | **PASS** |
+| **TC-22** | Audit State/Build | DevTools Pinia & `npm run build` | Pinia hanya user & ready; build 0 error | State minimalis; build Vite 100% lulus | **PASS** |
+
+

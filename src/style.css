@@ -1,0 +1,60 @@
+body {
+  font-family: system-ui;
+  color: #173647;
+  margin: 0;
+  background: #f5f8fa;
+}
+
+main {
+  max-width: 850px;
+  margin: auto;
+  padding: 1.5rem;
+}
+
+nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+form {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 620px;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+  padding: 0.5rem;
+}
+
+article {
+  background: white;
+  padding: 1rem;
+  margin: 1rem 0;
+  border: 1px solid #ccd9df;
+}
+
+a {
+  color: #006b69;
+}
+
+[role='alert'] {
+  color: #9f2020;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+}
+
+label {
+  display: block;
+}

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import inertia from '@inertiajs/vite';
 import { wayfinder } from '@laravel/vite-plugin-wayfinder';
 import tailwindcss from '@tailwindcss/vite';
@@ -6,8 +8,37 @@ import laravel from 'laravel-vite-plugin';
 import { bunny } from 'laravel-vite-plugin/fonts';
 import { defineConfig, lazyPlugins } from 'vite-plus';
 
+function spaIndexPlugin() {
+    return {
+        name: 'spa-index-html',
+        configureServer(server: any) {
+            server.middlewares.use(async (req: any, res: any, next: any) => {
+                if (req.method === 'GET' && req.headers.accept?.includes('text/html')) {
+                    const indexPath = path.resolve(server.config.root || process.cwd(), 'index.html');
+                    if (fs.existsSync(indexPath)) {
+                        try {
+                            const html = fs.readFileSync(indexPath, 'utf-8');
+                            const transformed = await server.transformIndexHtml(req.url, html);
+                            res.statusCode = 200;
+                            res.setHeader('Content-Type', 'text/html');
+                            res.setHeader('Cache-Control', 'no-cache');
+                            res.end(transformed);
+                            return;
+                        } catch (err) {
+                            next(err);
+                            return;
+                        }
+                    }
+                }
+                next();
+            });
+        },
+    };
+}
+
 export default defineConfig({
     plugins: lazyPlugins(() => [
+        spaIndexPlugin(),
         laravel({
             input: ['resources/css/app.css', 'resources/js/app.ts'],
             refresh: true,
@@ -32,6 +63,9 @@ export default defineConfig({
         }),
     ]),
     server: {
+        host: 'localhost',
+        port: 5173,
+        strictPort: true,
         watch: {
             ignored: [
                 '**/.agents/**',

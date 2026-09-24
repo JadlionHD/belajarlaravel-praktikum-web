@@ -1,10 +1,18 @@
 <?php
 
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\SessionController;
 use App\Http\Controllers\Teams\TeamInvitationController;
 use App\Http\Controllers\TicketController;
 use App\Http\Middleware\EnsureTeamMembership;
 use Illuminate\Support\Facades\Route;
+
+Route::post('/login', [SessionController::class, 'login'])
+    ->middleware('throttle:api-login')
+    ->name('login.store');
+Route::post('/logout', [SessionController::class, 'logout'])
+    ->middleware('auth:web')
+    ->name('logout');
 
 Route::inertia('/', 'Welcome')->name('home');
 Route::inertia('/pertemuan6', 'Pertemuan6')->name('pertemuan6');
